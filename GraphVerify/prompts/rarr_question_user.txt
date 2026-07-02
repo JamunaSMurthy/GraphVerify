@@ -1,0 +1,8 @@
+Claim:
+{claim}
+
+Evidence passages (id-prefixed):
+{evidence}
+
+Generate one verification question for the claim and answer it strictly from the evidence.
+Return JSON: {{"question": "...", "answer_from_evidence": "...", "evidence_found": true|false}}

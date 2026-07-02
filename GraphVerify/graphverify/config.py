@@ -1,6 +1,17 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal
+from pathlib import Path
+from typing import Dict, List, Literal, Optional
+
+try:
+    from dotenv import load_dotenv
+
+    # Load `<repo_root>/.env` (sibling of this package) if present, without
+    # overriding variables the caller already has set in the environment.
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
+except ImportError:  # pragma: no cover - python-dotenv is a declared dependency
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +53,11 @@ LLM_MAX_TOKENS:  int   = 512
 # Calibration
 # ---------------------------------------------------------------------------
 ECE_BINS: int = 15
+
+# ---------------------------------------------------------------------------
+# Text-evidence fallback (evidence_mode="text" / "hybrid")
+# ---------------------------------------------------------------------------
+TEXT_FALLBACK_THRESHOLD: float = 0.60
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +121,67 @@ MUTUALLY_EXCLUSIVE_SETS: List[List[str]] = [
 
 @dataclass
 class GraphVerifyConfig:
-    """Runtime configuration. Override fields per experiment."""
+    """
+    Runtime configuration for the GraphVerify pipeline. Override fields per
+    experiment; every field has a default matching the values reported in
+    the method description (see the ``lambda_*``/``*_threshold`` constants
+    above, tuned on a held-out development split).
+
+    Three independent axes control which system variant a given config
+    produces, and experiment scripts vary exactly one axis at a time:
+
+    ``verdict_mode`` (final-verdict computation):
+        - ``"score_only"``: the threshold-based path scorer
+          (:mod:`graphverify.path_scorer`, :mod:`graphverify.verdict_assigner`)
+          is the sole decision rule. This is GraphVerify-score: fully
+          auditable, no LLM in the verdict loop beyond claim/triple
+          extraction. Produced by :class:`graphverify.verifier.GraphVerify`.
+        - ``"hybrid_llm"``: the score-only verdict is computed first as a
+          prior, then :class:`graphverify.hybrid_verdict.HybridVerdictHead`
+          reads the claim, triple, and top support/conflict paths and
+          confirms or overrides it. This is GraphVerify-hybrid. Produced by
+          :class:`graphverify.verifier.HybridGraphVerify`. Use
+          :func:`graphverify.verifier.build_graphverify` to construct the
+          right class from this field automatically.
+
+    ``evidence_mode`` (what evidence feeds verdict computation, per claim):
+        - ``"text"``: no graph/path search at all; each claim is checked
+          directly against the concatenated retrieved-passage text via
+          :func:`graphverify.text_evidence.text_entailment_verdict`. This is
+          the weakest evidence condition in the evidence-composition
+          ablation (Table 3 "text evidence" row).
+        - ``"retrieved_graph"``: the provenance-linked graph is built only
+          from the retrieved passages, and a claim with no support/conflict
+          path clearing threshold is Unsupported with no fallback. This is
+          the fairest, retrieved-only setting used for the main results.
+        - ``"kg_paths"``: the retrieved-passage graph is augmented with
+          triples from an external, curated KG file (``external_kg_path``,
+          JSONL of ``{"head","relation","tail"}`` records) via
+          :func:`graphverify.evidence_graph.merge_external_kg`. If
+          ``external_kg_path`` is unset, this degrades to
+          ``"retrieved_graph"`` with a runtime warning (there is no silent
+          fallback).
+        - ``"hybrid"`` (default): ``"kg_paths"`` graph construction, plus a
+          text-evidence fallback (see ``text_fallback_threshold``) applied
+          only to claims the graph pipeline could not resolve
+          (Unsupported). This implements the "textual fallback matching"
+          the method description calls out as an extension for claims that
+          fail to map to a valid graph triple.
+
+    ``evidence_source`` (which passages the graph is built from, set by the
+    caller before invoking ``verify()`` — not branched on inside the
+    verifier itself, since the passage pool is a data-loading concern):
+        - ``"retrieved_only"``: passages are exactly what the shared
+          retriever returned for the query (the fair, no-privileged-
+          information main-results setting).
+        - ``"corpus_no_gold"``: passages are expanded from the full corpus
+          (larger recall) without using any gold/label information.
+        - ``"gold_oracle"``: a gold evidence graph or gold passage set is
+          supplied directly via the ``graph=`` argument of
+          :meth:`GraphVerify.verify`, bypassing extraction entirely. Used
+          only for the oracle-pipeline upper-bound experiment
+          (``experiments/run_oracle_pipeline_decomposition.py``).
+    """
     lambda_head: float = LAMBDA_HEAD
     lambda_rel:  float = LAMBDA_REL
     lambda_tail: float = LAMBDA_TAIL
@@ -121,7 +197,7 @@ class GraphVerifyConfig:
     top_k_paths:    int = TOP_K_PATHS
     top_k_passages: int = TOP_K_PASSAGES
 
-    llm_backend: Literal["openai", "local"] = "openai"
+    llm_backend: Literal["openai", "anthropic", "local"] = "openai"
     llm_model:   str = "gpt-4o-mini"
     llm_temperature: float = LLM_TEMPERATURE
     llm_max_tokens:  int   = LLM_MAX_TOKENS
@@ -130,8 +206,23 @@ class GraphVerifyConfig:
 
     embed_model: str = "BAAI/bge-base-en-v1.5"
 
+    verdict_mode:  Literal["score_only", "hybrid_llm"] = "score_only"
     evidence_mode: Literal["text", "retrieved_graph", "kg_paths", "hybrid"] = "hybrid"
+    evidence_source: Literal["retrieved_only", "corpus_no_gold", "gold_oracle"] = "retrieved_only"
+
+    external_kg_path: Optional[str] = None
+    text_fallback_threshold: float = TEXT_FALLBACK_THRESHOLD
 
     ece_bins: int = ECE_BINS
 
     seeds: List[int] = field(default_factory=lambda: [0, 1, 2])
+
+    # -------------------------------------------------------------------
+    # Component-ablation switches (consumed by eval/ablation.py). Each is a
+    # real behavioral switch, not a label: see the referenced module's
+    # docstring for exactly what changes when it is set.
+    # -------------------------------------------------------------------
+    disable_claim_decomposition:    bool = False   # see graphverify/verifier.py: GraphVerify.verify()
+    disable_relation_normalization: bool = False   # see graphverify/relation_normalizer.py
+    entity_match_mode: Literal["exact_only", "exact_alias", "exact_alias_embed", "embed_only"] = "exact_alias_embed"
+    # see graphverify/entity_linker.py and graphverify/path_scorer.py

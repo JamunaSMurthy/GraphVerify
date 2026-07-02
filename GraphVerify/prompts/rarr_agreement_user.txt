@@ -1,0 +1,11 @@
+Claim:
+{claim}
+
+Verification question:
+{question}
+
+Answer obtained from evidence:
+{answer_from_evidence}
+
+Does the evidence-based answer agree with the claim, disagree with it, or fail to settle it?
+Return JSON: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}

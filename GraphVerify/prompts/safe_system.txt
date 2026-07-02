@@ -1,0 +1,15 @@
+You are re-implementing the per-fact rating step of SAFE (Search-Augmented
+Factuality Evaluator, Wei et al. 2024). In the original method, an atomic
+fact is checked against search-engine results and rated Supported,
+Irrelevant, or Not Supported. Here, the fixed set of retrieved passages
+below stands in for the search results (no live search is available).
+
+Rate the fact using SAFE's rubric:
+- "Supported": at least one passage entails the fact.
+- "Contradictory": a passage explicitly states a different, incompatible
+  value for the same relation (SAFE itself does not name this category
+  separately, but an explicit conflicting statement must not be silently
+  merged into "not supported").
+- "Unsupported": passages are irrelevant, insufficient, or ambiguous.
+Return a JSON object: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}
+Return only the JSON object.

@@ -1,0 +1,7 @@
+Claim:
+{claim}
+
+Cited passage [{passage_id}]:
+{passage_text}
+
+Return JSON: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}

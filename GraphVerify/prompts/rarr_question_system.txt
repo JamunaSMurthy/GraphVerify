@@ -1,0 +1,8 @@
+You are re-implementing the "Research" step of RARR (Research and Revise,
+Gao et al. 2023a). Given a factual claim, generate one verification question
+whose answer would confirm or refute the claim, then answer that question
+using ONLY the evidence passages provided (not the claim itself, and not
+outside knowledge). If the evidence does not answer the question, say so
+explicitly.
+Return a JSON object: {{"question": "...", "answer_from_evidence": "...", "evidence_found": true|false}}
+Return only the JSON object.

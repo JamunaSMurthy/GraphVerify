@@ -6,26 +6,28 @@ networkx>=3.2
 numpy>=1.24.0
 scipy>=1.11.0
 scikit-learn>=1.3.0
-pandas>=2.0.0
 tqdm>=4.65.0
-pydantic>=2.0.0
 
 # LLM clients
 openai>=1.10.0
+anthropic>=0.34.0        # optional Anthropic backend for generator-transfer experiments
 huggingface-hub>=0.20.0
 
 # NLP / IE
-spacy>=3.7.0
+spacy>=3.7.0            # optional NER fallback for entity extraction; not required by any current code path
 # python -m spacy download en_core_web_sm
 
 # Retrieval
 faiss-cpu>=1.7.4       # swap for faiss-gpu if available
 
-# Graph / data
-jsonlines>=4.0.0
-
 # Evaluation
-nltk>=3.8.1
+krippendorff>=0.6.0    # Krippendorff's alpha (dataset/claim_annotation.py)
+matplotlib>=3.7.0      # reliability diagrams (eval/calibration_report.py)
+
+# System / environment
+python-dotenv>=1.0.0   # loads .env for API keys (graphverify/config.py)
+psutil>=5.9.0           # runtime/memory benchmarking (experiments/benchmark_runtime_and_compute.py)
+requests>=2.31.0        # RAGTruth dataset download (dataset/loader.py)
 
 # Datasets
 datasets>=2.14.0      # HuggingFace datasets (HotpotQA, FEVER, 2WikiMultiHop, MuSiQue)

@@ -1,0 +1,8 @@
+Claim:
+{claim}
+
+Retrieved evidence passages (each prefixed by its passage id):
+{evidence}
+
+Decide whether the evidence supports, contradicts, or is insufficient for the claim.
+Return JSON: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}

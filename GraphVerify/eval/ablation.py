@@ -1,8 +1,16 @@
 """
 Component ablation runner.
 
-Evaluates each ablation variant by overriding GraphVerifyConfig fields
-and running the full verification pipeline on a sample subset.
+Evaluates each ablation variant by overriding real `GraphVerifyConfig`
+fields and running the full GraphVerify-score verification pipeline on a
+sample subset. Every variant below maps to a config field that actually
+changes pipeline behavior (see `graphverify/config.py`,
+`graphverify/entity_linker.py`, `graphverify/path_scorer.py`,
+`graphverify/relation_normalizer.py`, `graphverify/verifier.py` for exactly
+what each one does) — `run_variant` raises on any `kwargs` key that is not
+a real `GraphVerifyConfig` field, rather than silently dropping it, so a
+typo'd or stale ablation definition fails loudly instead of quietly running
+as a no-op.
 
 Usage:
   python eval/ablation.py \\
@@ -19,8 +27,8 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, fields, replace
+from typing import Any, Dict, List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -34,23 +42,25 @@ from eval.metrics import compute_all_metrics
 @dataclass
 class AblationVariant:
     name:   str
-    kwargs: Dict  # GraphVerifyConfig overrides
+    kwargs: Dict[str, Any]  # GraphVerifyConfig overrides, applied on top of the base config
 
 
 ABLATION_VARIANTS: List[AblationVariant] = [
-    AblationVariant("w/o claim decomp.",    {"max_claims_override": 1}),
-    AblationVariant("w/o relation norm.",   {"skip_relation_norm": True}),
-    AblationVariant("w/o provenance",       {"lambda_prov": 0.0}),
-    AblationVariant("w/o contradiction",    {"contradict_threshold": 1.01}),
-    AblationVariant("exact matching only",  {"embed_cosine_cutoff": 1.0}),
-    AblationVariant("semantic only",        {"exact_match_only": False, "alias_match_only": False}),
-    AblationVariant("w/o hybrid evidence",  {"evidence_mode": "retrieved_graph"}),
-    AblationVariant("Full GraphVerify",     {}),
+    AblationVariant("w/o claim decomposition", {"disable_claim_decomposition": True}),
+    AblationVariant("w/o relation normalization", {"disable_relation_normalization": True}),
+    AblationVariant("w/o provenance scoring", {"lambda_prov": 0.0}),
+    AblationVariant("w/o contradiction detection", {"contradict_threshold": 1.01}),
+    AblationVariant("exact matching only", {"entity_match_mode": "exact_only"}),
+    AblationVariant("semantic matching only", {"entity_match_mode": "embed_only"}),
+    AblationVariant("w/o hybrid evidence", {"evidence_mode": "retrieved_graph"}),
+    AblationVariant("Full GraphVerify", {}),
 ]
 
+_VALID_CONFIG_FIELDS = {f.name for f in fields(GraphVerifyConfig)}
 
-def parse_args():
-    p = argparse.ArgumentParser()
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--dataset",     type=str, required=True)
     p.add_argument("--split",       type=str, default="validation")
     p.add_argument("--data_dir",    type=str, default=None)
@@ -59,7 +69,6 @@ def parse_args():
     p.add_argument("--llm_model",   type=str, default="gpt-4o-mini")
     p.add_argument("--max_samples", type=int, default=200)
     p.add_argument("--output",      type=str, default="output/ablation")
-    p.add_argument("--seed",        type=int, default=0)
     return p.parse_args()
 
 
@@ -69,25 +78,23 @@ def run_variant(
     graphs_cache: Dict,
     base_cfg: GraphVerifyConfig,
 ) -> Dict:
-    valid_fields = set(GraphVerifyConfig.__dataclass_fields__.keys())
-    cfg_dict = {
-        k: getattr(base_cfg, k)
-        for k in ["llm_backend", "llm_model", "embed_model",
-                  "contradict_threshold", "support_threshold",
-                  "embed_cosine_cutoff", "lambda_prov", "evidence_mode"]
-    }
-    for k, v in variant.kwargs.items():
-        if k in valid_fields:
-            cfg_dict[k] = v
-
-    cfg = GraphVerifyConfig(**{k: v for k, v in cfg_dict.items() if k in valid_fields})
-    gv  = GraphVerify(cfg)
+    unknown = set(variant.kwargs) - _VALID_CONFIG_FIELDS
+    if unknown:
+        raise ValueError(
+            f"Ablation variant '{variant.name}' references unknown GraphVerifyConfig "
+            f"field(s) {sorted(unknown)}; this would silently no-op instead of ablating anything."
+        )
+    cfg = replace(base_cfg, **variant.kwargs)
+    gv = GraphVerify(cfg)
 
     preds, golds, pred_paths, gold_paths, scores = [], [], [], [], []
 
     for sample in samples:
         sid = str(sample.get("id", ""))
-        ans = sample.get("answer", sample.get("generated", ""))
+        # Verify the *generated* answer, not the gold answer -- verifying the
+        # gold answer would trivially bias toward "Supported" and leak the
+        # label the ablation is trying to measure against.
+        ans = sample.get("generated") or sample.get("answer", "")
         if not ans:
             continue
 

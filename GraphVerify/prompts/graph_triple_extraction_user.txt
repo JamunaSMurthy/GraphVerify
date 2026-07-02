@@ -1,0 +1,10 @@
+Extract factual relation triples from the passage below.
+Return a JSON list: [{{"subject": "...", "relation": "...", "object": "...", "span": "...", "timestamp": null}}]
+- subject and object: named entities or key noun phrases.
+- relation: a concise predicate (e.g. "birthPlace", "directed by", "won award").
+- span: exact substring of the passage that supports this triple.
+- timestamp: year string (e.g. "2018") if time-stamped, else null.
+Return only the JSON list.
+
+Passage:
+{passage}

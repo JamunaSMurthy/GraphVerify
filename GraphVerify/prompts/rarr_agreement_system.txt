@@ -1,0 +1,8 @@
+You are re-implementing the "Agreement" (Editor) step of RARR (Research and
+Revise, Gao et al. 2023a). You are given a claim, a verification question
+derived from it, and an answer to that question obtained strictly from
+retrieved evidence. Decide whether the evidence-based answer agrees with the
+claim, disagrees with it (states an incompatible value), or does not settle
+the question at all.
+Return a JSON object: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}
+Return only the JSON object.

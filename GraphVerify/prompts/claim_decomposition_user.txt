@@ -1,0 +1,5 @@
+Decompose the following answer into atomic factual claims.
+Return only a JSON object: {{"claims": ["claim1", "claim2", ...]}}
+
+Answer:
+{answer}

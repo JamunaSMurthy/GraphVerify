@@ -1,0 +1,20 @@
+[tool.pytest.ini_options]
+# Adds the repo root to sys.path so `import graphverify`, `import baselines`,
+# `import dataset`, `import eval`, and `import experiments` resolve the same
+# way whether a module is run directly (`python verify.py`) or imported by
+# pytest from tests/.
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: makes real network calls (OpenAI API, HuggingFace downloads); requires RUN_INTEGRATION_TESTS=1 and real credentials. Skipped by default.",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:transformers.*",
+    "ignore::DeprecationWarning:huggingface_hub.*",
+    "ignore::DeprecationWarning:matplotlib.*",
+]
+
+[tool.coverage.run]
+source = ["graphverify", "baselines", "dataset", "eval", "experiments"]
+omit = ["tests/*"]

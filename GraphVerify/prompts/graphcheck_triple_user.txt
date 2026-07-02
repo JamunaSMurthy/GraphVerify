@@ -1,0 +1,3 @@
+Claim: {claim}
+
+Return JSON: {{"head": "...", "relation": "...", "tail": "..."}}

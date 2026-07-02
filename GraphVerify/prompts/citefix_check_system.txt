@@ -1,0 +1,6 @@
+You are re-implementing the citation-check step of CiteFix (Maheshwari et
+al. 2025). You are given a claim and the single passage it is (assumed to
+be) cited to. Decide whether that specific passage actually supports the
+claim, explicitly contradicts it, or is unrelated/insufficient.
+Return a JSON object: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}
+Return only the JSON object.

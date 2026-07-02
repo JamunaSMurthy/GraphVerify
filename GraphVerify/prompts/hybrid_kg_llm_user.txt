@@ -1,0 +1,11 @@
+Claim: {claim}
+Extracted triple: ({head}, {relation}, {tail})
+
+Knowledge-graph structural summary:
+- head entity linked to graph: {head_linked} (match type: {head_match_type})
+- tail entity linked to graph: {tail_linked} (match type: {tail_match_type})
+- head node degree (outgoing edges): {head_degree}
+- tail node degree (incoming edges): {tail_degree}
+- surface relations observed directly between head and tail: {direct_relations}
+
+Return JSON: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}

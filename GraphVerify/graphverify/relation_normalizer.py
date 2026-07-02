@@ -7,11 +7,21 @@ Matching proceeds in three stages:
   3. Embedding cosine similarity fallback
 
 Returns the canonical name and an agreement score in [0, 1].
+
+`disabled=True` (wired from ``GraphVerifyConfig.disable_relation_normalization``,
+used by the "w/o relation normalization" component-ablation variant in
+``eval/ablation.py``) turns `normalize()` into an identity function: the raw
+surface string is returned unchanged as if it were already canonical. This
+is a real behavioral change, not a cosmetic flag — downstream, canonical-
+relation-keyed lookups (`FUNCTIONAL_RELATIONS`, `TEMPORAL_RELATIONS` in
+`graphverify/config.py`, consumed by `graphverify/incompatibility.py`) will
+then almost never match a raw surface string, so functional/temporal
+contradiction detection degrades exactly as the ablation intends.
 """
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 from .config import RELATION_ALIASES, EMBED_COSINE_CUTOFF
 
@@ -19,8 +29,10 @@ from .config import RELATION_ALIASES, EMBED_COSINE_CUTOFF
 class RelationNormalizer:
 
     def __init__(self, embed_model: str = "BAAI/bge-base-en-v1.5",
-                 cosine_cutoff: float = EMBED_COSINE_CUTOFF) -> None:
+                 cosine_cutoff: float = EMBED_COSINE_CUTOFF,
+                 disabled: bool = False) -> None:
         self._cutoff = cosine_cutoff
+        self._disabled = disabled
         self._alias_map: Dict[str, str] = {}
         for canonical, aliases in RELATION_ALIASES.items():
             self._alias_map[canonical.lower()] = canonical
@@ -35,9 +47,14 @@ class RelationNormalizer:
         """
         Returns (canonical_relation, agreement_score).
         Returns (surface_unchanged, 0.0) when no match is found.
+        Returns (surface_unchanged, 1.0) unconditionally if this normalizer
+        was constructed with `disabled=True`.
         """
         if not surface or not surface.strip():
             return surface, 0.0
+
+        if self._disabled:
+            return surface.strip(), 1.0
 
         cleaned = self._clean(surface)
 

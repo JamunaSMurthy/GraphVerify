@@ -1,0 +1,8 @@
+Claim:
+{claim}
+
+Evidence available this round (id-prefixed, {n_passages} of {n_total} total passages):
+{evidence}
+
+Round {round_num} of at most {max_rounds}.
+Return JSON: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "confident_enough": true|false, "evidence_ids": ["..."], "rationale": "..."}}

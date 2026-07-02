@@ -1,15 +1,26 @@
-"""LLM abstraction supporting OpenAI-compatible API and local Qwen2.5-7B-Instruct."""
+"""LLM abstraction supporting the OpenAI API (or any OpenAI-compatible
+endpoint, e.g. a self-hosted vLLM server), the Anthropic API, and a locally
+loaded Qwen2.5-7B-Instruct model via transformers."""
 from __future__ import annotations
 
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .config import GraphVerifyConfig
 
 
 class LLMClient:
+    """
+    Uniform chat interface used everywhere an LLM call is needed: claim
+    decomposition, triple extraction, evidence-graph triple extraction, the
+    GraphVerify-Hybrid verdict head, text-evidence fallback/entailment, RAG
+    answer generation, and every text-driven baseline in ``baselines/``.
+    Swapping ``cfg.llm_backend``/``cfg.llm_model`` changes the model used by
+    every one of those call sites without touching their code — this is
+    what ``experiments/run_generator_transfer.py`` relies on.
+    """
 
     def __init__(self, cfg: GraphVerifyConfig) -> None:
         self.cfg = cfg
@@ -20,6 +31,8 @@ class LLMClient:
 
         if self._backend == "openai":
             self._init_openai()
+        elif self._backend == "anthropic":
+            self._init_anthropic()
         elif self._backend == "local":
             self._init_local()
         else:
@@ -35,13 +48,19 @@ class LLMClient:
             base_url=os.getenv("OPENAI_BASE_URL", None),
         )
 
+    def _init_anthropic(self) -> None:
+        try:
+            from anthropic import Anthropic
+        except ImportError:
+            raise ImportError("pip install anthropic")
+        self._client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+
     def _init_local(self) -> None:
         try:
             from transformers import AutoModelForCausalLM, AutoTokenizer
             import torch
         except ImportError:
             raise ImportError("pip install transformers torch accelerate")
-        import torch
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.cfg.local_model_path, trust_remote_code=True
         )
@@ -56,6 +75,8 @@ class LLMClient:
     def chat(self, messages: List[Dict[str, str]], *, json_mode: bool = False) -> str:
         if self._backend == "openai":
             return self._openai_chat(messages, json_mode=json_mode)
+        if self._backend == "anthropic":
+            return self._anthropic_chat(messages)
         return self._local_chat(messages)
 
     def chat_json(self, messages: List[Dict[str, str]]) -> Any:
@@ -88,6 +109,25 @@ class LLMClient:
             kwargs["response_format"] = {"type": "json_object"}
         resp = self._client.chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
+
+    def _anthropic_chat(self, messages: List[Dict[str, str]]) -> str:
+        # The Anthropic Messages API takes the system prompt as a separate
+        # top-level argument rather than as a "system"-role message.
+        system_parts = [m["content"] for m in messages if m.get("role") == "system"]
+        turn_messages = [
+            {"role": m["role"], "content": m["content"]}
+            for m in messages if m.get("role") != "system"
+        ]
+        kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "messages": turn_messages,
+            "max_tokens": self._max_tokens,
+            "temperature": self._temperature,
+        }
+        if system_parts:
+            kwargs["system"] = "\n\n".join(system_parts)
+        resp = self._client.messages.create(**kwargs)
+        return "".join(block.text for block in resp.content if block.type == "text")
 
     def _local_chat(self, messages: List[Dict[str, str]]) -> str:
         import torch

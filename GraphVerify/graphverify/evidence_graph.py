@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
 
 import networkx as nx
+
+from .prompts import load_prompt
 
 
 @dataclass
@@ -93,6 +96,36 @@ class EvidenceGraph:
     def nx_graph(self) -> nx.MultiDiGraph:
         return self._G
 
+    def induced_subgraph(self, node_ids) -> "EvidenceGraph":
+        """
+        Returns a new EvidenceGraph containing only the given node ids and
+        the edges between them, preserving provenance metadata. Used by the
+        GraphRAG-adapted and HippoRAG-adapted baselines
+        (`baselines/graphrag_adapted.py`, `baselines/hipporag_adapted.py`)
+        to restrict path search to a retrieved community/personalized-PageRank
+        subgraph instead of the full provenance-linked graph, so the shared
+        verdict head (:class:`graphverify.path_searcher.PathSearcher` +
+        :class:`graphverify.verdict_assigner.VerdictAssigner`) only sees the
+        evidence that baseline's retrieval strategy actually selected.
+        """
+        keep = set(node_ids)
+        sub = EvidenceGraph()
+        for nid in keep:
+            node = self._nodes.get(nid)
+            if node is not None:
+                sub.add_node(node)
+        for u, v, data in self._G.edges(data=True):
+            if u in keep and v in keep:
+                prov = data.get("provenance", {})
+                sub.add_edge(GraphEdge(
+                    src=u, dst=v,
+                    relation=data.get("relation", ""),
+                    surface_rel=data.get("surface_rel", ""),
+                    provenance=ProvenanceMeta(**prov) if isinstance(prov, dict) else prov,
+                    weight=data.get("weight", 1.0),
+                ))
+        return sub
+
     def __len__(self) -> int:
         return self._G.number_of_nodes()
 
@@ -133,17 +166,6 @@ class EvidenceGraph:
 
 class EvidenceGraphBuilder:
     """Builds an EvidenceGraph from retrieved passages using LLM triple extraction."""
-
-    EXTRACT_PROMPT = """Extract factual relation triples from the passage below.
-Return a JSON list: [{{"subject": "...", "relation": "...", "object": "...", "span": "...", "timestamp": null}}]
-- subject and object: named entities or key noun phrases.
-- relation: a concise predicate (e.g. "birthPlace", "directed by", "won award").
-- span: exact substring of the passage that supports this triple.
-- timestamp: year string (e.g. "2018") if time-stamped, else null.
-Return only the JSON list.
-
-Passage:
-{passage}"""
 
     def __init__(self, llm_client: Any, relation_normalizer: Any,
                  embed_model: str = "BAAI/bge-base-en-v1.5") -> None:
@@ -208,8 +230,8 @@ Passage:
         if not passage.strip():
             return []
         messages = [
-            {"role": "system", "content": "You are an information-extraction assistant."},
-            {"role": "user",   "content": self.EXTRACT_PROMPT.format(passage=passage[:2000])},
+            {"role": "system", "content": load_prompt("graph_triple_extraction_system")},
+            {"role": "user",   "content": load_prompt("graph_triple_extraction_user").format(passage=passage[:2000])},
         ]
         result = self._llm.chat_json(messages)
         if isinstance(result, list):
@@ -221,3 +243,59 @@ Passage:
 
 def _node_id(label: str) -> str:
     return hashlib.md5(label.lower().strip().encode()).hexdigest()[:12]
+
+
+def merge_external_kg(graph: EvidenceGraph, kg_path: str) -> int:
+    """
+    Merges curated (head, relation, tail) triples from an external KG file
+    into `graph` in place, used by ``evidence_mode="kg_paths"`` / ``"hybrid"``
+    (see :class:`graphverify.config.GraphVerifyConfig`).
+
+    `kg_path` is a JSONL file, one triple per line:
+    ``{"head": "...", "relation": "...", "tail": "...", "confidence": 1.0}``
+    (``confidence`` optional, defaults to 1.0 — external KG triples are
+    assumed curated/reliable unless stated otherwise). Each triple becomes an
+    edge with ``provenance.source_doc="external_kg"`` and
+    ``provenance.retriever_rank=0`` so path scoring
+    (:mod:`graphverify.path_scorer`) can still weight it, but downstream
+    analysis can identify which edges came from the KG rather than from a
+    retrieved passage.
+
+    Returns the number of triples merged. Raises FileNotFoundError if
+    `kg_path` does not exist — callers that want a silent no-op for a
+    missing/unset path should check `kg_path` themselves before calling this
+    (see ``GraphVerify._build_graph`` for the documented fallback behavior).
+    """
+    if not os.path.exists(kg_path):
+        raise FileNotFoundError(f"External KG file not found: {kg_path}")
+
+    n_merged = 0
+    with open(kg_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            triple = json.loads(line)
+            subj = str(triple.get("head", "")).strip()
+            rel  = str(triple.get("relation", "")).strip()
+            obj  = str(triple.get("tail", "")).strip()
+            if not subj or not rel or not obj:
+                continue
+            confidence = float(triple.get("confidence", 1.0))
+
+            h_id = _node_id(subj)
+            t_id = _node_id(obj)
+            graph.add_node(GraphNode(node_id=h_id, label=subj, node_type="entity"))
+            graph.add_node(GraphNode(node_id=t_id, label=obj, node_type="entity"))
+            graph.add_edge(GraphEdge(
+                src=h_id, dst=t_id,
+                relation=rel, surface_rel=rel,
+                provenance=ProvenanceMeta(
+                    source_doc="external_kg", source_span="", confidence=confidence,
+                    retriever_rank=0, timestamp=triple.get("timestamp"),
+                ),
+                weight=confidence,
+            ))
+            n_merged += 1
+
+    return n_merged

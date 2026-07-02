@@ -1,0 +1,6 @@
+Query: {query}
+
+Retrieved passages (id-prefixed):
+{evidence}
+
+Answer:

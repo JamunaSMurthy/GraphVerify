@@ -4,22 +4,7 @@ from __future__ import annotations
 import re
 from typing import List
 
-
-DECOMPOSE_SYSTEM = """You are a claim decomposition assistant.
-Decompose a paragraph into atomic, self-contained factual claims.
-Rules:
-- Each claim must be independently verifiable.
-- Each claim should contain exactly one assertion.
-- Preserve all named entities exactly as stated.
-- Do not infer or add information not present in the text.
-- Return a JSON object with key "claims": a list of claim strings.
-"""
-
-DECOMPOSE_USER = """Decompose the following answer into atomic factual claims.
-Return only a JSON object: {{"claims": ["claim1", "claim2", ...]}}
-
-Answer:
-{answer}"""
+from .prompts import load_prompt
 
 
 class ClaimDecomposer:
@@ -36,8 +21,8 @@ class ClaimDecomposer:
             return []
 
         messages = [
-            {"role": "system", "content": DECOMPOSE_SYSTEM},
-            {"role": "user",   "content": DECOMPOSE_USER.format(answer=answer.strip())},
+            {"role": "system", "content": load_prompt("claim_decomposition_system")},
+            {"role": "user",   "content": load_prompt("claim_decomposition_user").format(answer=answer.strip())},
         ]
         result = self._llm.chat_json(messages)
 

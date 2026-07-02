@@ -162,13 +162,156 @@ def _load_fever(split: str = "validation", max_samples: Optional[int] = None) ->
     return records
 
 
+RAGTRUTH_SOURCE_INFO_URL = "https://raw.githubusercontent.com/ParticleMedia/RAGTruth/main/dataset/source_info.jsonl"
+RAGTRUTH_RESPONSE_URL    = "https://raw.githubusercontent.com/ParticleMedia/RAGTruth/main/dataset/response.jsonl"
+
+# RAGTruth (Niu et al. 2024) label_type values that mark a hallucination span
+# as an explicit factual conflict with the source vs. ungrounded/added
+# content with no direct conflict. See the official release at
+# https://github.com/ParticleMedia/RAGTruth for the annotation guideline
+# this taxonomy comes from.
+_RAGTRUTH_CONFLICT_LABELS  = {"Evident Conflict", "Subtle Conflict"}
+_RAGTRUTH_BASELESS_LABELS  = {"Evident Baseless Info", "Subtle Baseless Info"}
+
+
 def _load_ragtruth(split: str = "test", max_samples: Optional[int] = None) -> List[Dict]:
-    default_path = os.path.join(os.path.dirname(__file__), "data", "ragtruth.jsonl")
-    if os.path.exists(default_path):
-        return _load_jsonl(default_path, max_samples)
-    print(f"[WARNING] RAGTruth not found at {default_path}. "
-          "Download and place as dataset/data/ragtruth.jsonl")
-    return []
+    """
+    Loads RAGTruth (Niu et al. 2024), joining ``response.jsonl`` (one
+    generated response per row, with character-span hallucination labels)
+    against ``source_info.jsonl`` (the source document each response was
+    generated from) on ``source_id``. Files are downloaded once from the
+    official GitHub release and cached under ``dataset/data/``.
+
+    RAGTruth ships only ``train``/``test`` splits (no ``validation``); by
+    convention shared with the other loaders in this module,
+    ``"validation"``/``"val"``/``"dev"`` are mapped to RAGTruth's ``train``
+    split, used here as the development/threshold-tuning pool.
+
+    RAGTruth is not a retrieval benchmark, so a response's source document is
+    not pre-chunked into ranked passages the way HotpotQA/2Wiki/MuSiQue/FEVER
+    are. ``source_info`` is split into paragraph-sized passages (see
+    :func:`_chunk_source_into_passages`) to give the graph-construction
+    pipeline something structurally equivalent to retrieved evidence; this
+    is a documented approximation, not a claim that RAGTruth includes gold
+    passage rankings.
+
+    ``gold_verdict`` is derived per response, not per claim: a response with
+    no hallucination labels is "Supported"; a response with at least one
+    "*Conflict" label is "Contradictory" (an explicit factual conflict with
+    the source takes priority — consistent with the conflict-before-support
+    priority `graphverify.verdict_assigner.VerdictAssigner` uses); a
+    response with only "*Baseless Info" labels (ungrounded but not directly
+    conflicting) is "Unsupported". Downstream claim-level evaluation should
+    re-derive per-claim labels from the response-level character spans in
+    ``label`` (kept in the record) rather than treating this response-level
+    verdict as a claim-level gold label.
+    """
+    hf_split = "train" if split in ("validation", "val", "dev") else split
+    if hf_split not in ("train", "test"):
+        raise ValueError(f"RAGTruth only has train/test splits (mapped from validation/val/dev); got '{split}'")
+
+    source_by_id = _load_ragtruth_source_info()
+    responses = _load_ragtruth_responses(hf_split)
+
+    records = []
+    for i, resp in enumerate(responses):
+        if max_samples and i >= max_samples:
+            break
+        source = source_by_id.get(resp.get("source_id"))
+        if source is None:
+            continue
+
+        source_text = str(source.get("source_info", ""))
+        passages = _chunk_source_into_passages(source_text, base_id=f"ragtruth_{resp['source_id']}")
+
+        labels = resp.get("labels", [])
+        label_types = {lbl.get("label_type") for lbl in labels}
+        if not labels:
+            gold_verdict = "Supported"
+        elif label_types & _RAGTRUTH_CONFLICT_LABELS:
+            gold_verdict = "Contradictory"
+        else:
+            gold_verdict = "Unsupported"
+
+        records.append({
+            "id": f"ragtruth_{resp['id']}",
+            "query": source.get("prompt", ""),
+            "answer": "",
+            "generated": resp.get("response", ""),
+            "passages": passages,
+            "gold_verdict": gold_verdict,
+            "gold_path": "",
+            "label": json.dumps({
+                "task_type": source.get("task_type", ""),
+                "quality": resp.get("quality", ""),
+                "model": resp.get("model", ""),
+                "hallucination_spans": labels,
+            }),
+        })
+    return records
+
+
+def _ragtruth_cache_dir() -> str:
+    cache_dir = os.path.join(os.path.dirname(__file__), "data")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+
+def _download_ragtruth_file(url: str, cache_path: str) -> str:
+    if os.path.exists(cache_path):
+        return cache_path
+    import requests
+    resp = requests.get(url, timeout=60)
+    resp.raise_for_status()
+    with open(cache_path, "w", encoding="utf-8") as f:
+        f.write(resp.text)
+    return cache_path
+
+
+def _load_ragtruth_source_info() -> Dict[str, Dict]:
+    cache_path = os.path.join(_ragtruth_cache_dir(), "ragtruth_source_info.jsonl")
+    _download_ragtruth_file(RAGTRUTH_SOURCE_INFO_URL, cache_path)
+    return {str(rec["source_id"]): rec for rec in _load_jsonl(cache_path, max_samples=None)}
+
+
+def _load_ragtruth_responses(split: str) -> List[Dict]:
+    cache_path = os.path.join(_ragtruth_cache_dir(), "ragtruth_response.jsonl")
+    _download_ragtruth_file(RAGTRUTH_RESPONSE_URL, cache_path)
+    return [rec for rec in _load_jsonl(cache_path, max_samples=None) if rec.get("split") == split]
+
+
+def _chunk_source_into_passages(source_text: str, base_id: str, max_chars: int = 600) -> List[Dict]:
+    """
+    Splits a RAGTruth source document into paragraph-sized passage dicts
+    (falling back to sentence grouping if the source has no paragraph
+    breaks), each capped at `max_chars`, so it has the same
+    ``{id, text, rank, score}`` shape as every other loader's passages.
+    """
+    paragraphs = [p.strip() for p in source_text.split("\n") if p.strip()]
+    if len(paragraphs) <= 1:
+        import re
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", source_text.strip()) if s.strip()]
+        paragraphs, chunk = [], []
+        chunk_len = 0
+        for sent in sentences:
+            chunk.append(sent)
+            chunk_len += len(sent)
+            if chunk_len >= max_chars:
+                paragraphs.append(" ".join(chunk))
+                chunk, chunk_len = [], 0
+        if chunk:
+            paragraphs.append(" ".join(chunk))
+
+    passages = []
+    for j, para in enumerate(paragraphs):
+        for k in range(0, len(para), max_chars):
+            passages.append({
+                "id": f"{base_id}_p{j}_{k // max_chars}",
+                "text": para[k: k + max_chars],
+                "rank": len(passages) + 1,
+                "score": 1.0 / (len(passages) + 1),
+            })
+    return passages or [{"id": f"{base_id}_p0", "text": source_text[:max_chars], "rank": 1, "score": 1.0}]
 
 
 def _contexts_to_passages(titles, contents, base_id):
@@ -197,3 +340,59 @@ def save_jsonl(records: List[Dict], path: str) -> None:
     with open(path, "w") as f:
         for rec in records:
             f.write(json.dumps(rec) + "\n")
+
+
+_REQUIRED_FIELDS = ("id", "query", "answer", "generated", "passages", "gold_verdict", "gold_path", "label")
+_VALID_VERDICTS = {"Supported", "Unsupported", "Contradictory"}
+_REQUIRED_PASSAGE_FIELDS = ("id", "text", "rank", "score")
+
+
+def validate_schema(records: List[Dict[str, Any]], strict_verdict: bool = True) -> List[str]:
+    """
+    Validates that every record matches the unified dataset schema
+    documented at the top of this module. Returns a list of human-readable
+    error strings (empty list == valid). Used by
+    ``experiments/build_dataset_statistics.py`` and the dataset-loader test
+    suite to catch schema drift before it silently corrupts downstream
+    graph-building/verification runs.
+
+    `strict_verdict` controls whether `gold_verdict` must be one of
+    Supported/Unsupported/Contradictory (it always must be a string; some
+    exploratory data — e.g. an unlabeled corpus — may legitimately use "").
+    """
+    errors: List[str] = []
+    seen_ids = set()
+
+    for i, rec in enumerate(records):
+        prefix = f"record[{i}]"
+        if not isinstance(rec, dict):
+            errors.append(f"{prefix}: not a dict")
+            continue
+
+        for field in _REQUIRED_FIELDS:
+            if field not in rec:
+                errors.append(f"{prefix}: missing required field '{field}'")
+
+        rid = rec.get("id")
+        if rid is not None:
+            if rid in seen_ids:
+                errors.append(f"{prefix}: duplicate id '{rid}'")
+            seen_ids.add(rid)
+
+        verdict = rec.get("gold_verdict", "")
+        if strict_verdict and verdict and verdict not in _VALID_VERDICTS:
+            errors.append(f"{prefix} (id={rid}): invalid gold_verdict '{verdict}'")
+
+        passages = rec.get("passages")
+        if not isinstance(passages, list):
+            errors.append(f"{prefix} (id={rid}): 'passages' must be a list")
+            continue
+        for j, p in enumerate(passages):
+            if not isinstance(p, dict):
+                errors.append(f"{prefix} (id={rid}) passage[{j}]: not a dict")
+                continue
+            for field in _REQUIRED_PASSAGE_FIELDS:
+                if field not in p:
+                    errors.append(f"{prefix} (id={rid}) passage[{j}]: missing field '{field}'")
+
+    return errors

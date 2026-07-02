@@ -1,0 +1,14 @@
+Claim:
+{claim}
+
+Canonical triple: ({head}, {relation}, {tail})
+
+Top retrieved support paths (head -> ... -> tail chains consistent with the claimed relation):
+{support_paths}
+
+Top retrieved conflict paths (head -> ... -> an incompatible tail):
+{conflict_paths}
+
+Rule-based prior verdict: {rule_based_verdict} (aggregate path score {rule_based_score})
+
+Return the final verdict as JSON: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}

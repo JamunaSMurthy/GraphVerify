@@ -1,0 +1,9 @@
+Claim:
+{claim}
+
+Originally cited passage [{passage_id}] did NOT support the claim (checker rationale: {check_rationale}).
+
+Candidate passages to search for a repaired citation (id-prefixed):
+{evidence}
+
+Return JSON: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "repaired_passage_id": "..." | null, "rationale": "..."}}

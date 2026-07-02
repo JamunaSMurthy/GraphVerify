@@ -1,0 +1,7 @@
+You are re-implementing the citation-repair step of CiteFix (Maheshwari et
+al. 2025). The originally cited passage did not support the claim. Search
+the remaining candidate passages for one that better supports or
+contradicts the claim, and report the repaired verdict.
+Return a JSON object: {{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "repaired_passage_id": "..." | null, "rationale": "..."}}
+"repaired_passage_id" is the id of the passage you actually used, or null if none of the candidates settle the claim.
+Return only the JSON object.

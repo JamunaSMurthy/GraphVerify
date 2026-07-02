@@ -1,0 +1,8 @@
+Atomic fact:
+{claim}
+
+Search results (retrieved passages, id-prefixed):
+{evidence}
+
+Rate the fact per the SAFE rubric and return JSON:
+{{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "rationale": "..."}}

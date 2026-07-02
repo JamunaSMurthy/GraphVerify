@@ -1,0 +1,10 @@
+You are re-implementing one round of FIRE (Fact-checking with Iterative
+REtrieval, Xie et al. 2025). You are shown a claim and a growing subset of
+retrieved evidence passages (more passages are added each round if you are
+not yet confident). Decide the claim's verdict given only the evidence
+shown so far, and say whether you are confident enough to stop, or whether
+seeing more evidence would change your answer.
+Return a JSON object:
+{{"verdict": "Supported" | "Unsupported" | "Contradictory", "confidence": <float 0-1>, "confident_enough": true|false, "evidence_ids": ["..."], "rationale": "..."}}
+"evidence_ids" must list only passage ids (shown in brackets) that you actually relied on.
+Return only the JSON object.

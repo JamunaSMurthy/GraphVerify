@@ -16,20 +16,7 @@ from typing import Optional
 
 from .entity_linker import EntityLinker
 from .relation_normalizer import RelationNormalizer
-
-
-EXTRACT_SYSTEM = """You are a triple extraction assistant.
-Given a factual claim, extract the head entity, relation, and tail entity.
-Return a JSON object: {{"head": "...", "relation": "...", "tail": "..."}}
-- head: subject entity or noun phrase
-- relation: concise predicate or relation type
-- tail: object entity or value
-Return only the JSON object."""
-
-EXTRACT_USER = """Extract the (head, relation, tail) triple from this claim:
-Claim: {claim}
-
-Return JSON: {{"head": "...", "relation": "...", "tail": "..."}}"""
+from .prompts import load_prompt
 
 
 @dataclass
@@ -93,8 +80,8 @@ class TripleExtractor:
 
     def _llm_extract(self, claim: str) -> Optional[dict]:
         messages = [
-            {"role": "system", "content": EXTRACT_SYSTEM},
-            {"role": "user",   "content": EXTRACT_USER.format(claim=claim)},
+            {"role": "system", "content": load_prompt("triple_extraction_system")},
+            {"role": "user",   "content": load_prompt("triple_extraction_user").format(claim=claim)},
         ]
         result = self._llm.chat_json(messages)
         if isinstance(result, dict) and all(k in result for k in ("head", "relation", "tail")):

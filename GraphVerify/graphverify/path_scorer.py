@@ -38,6 +38,7 @@ class PathScorer:
         lambda_prov: float = LAMBDA_PROV,
         embed_model: str = "BAAI/bge-base-en-v1.5",
         cosine_cutoff: float = EMBED_COSINE_CUTOFF,
+        match_mode: str = "exact_alias_embed",
     ) -> None:
         self.lh = lambda_head
         self.lr = lambda_rel
@@ -45,6 +46,7 @@ class PathScorer:
         self.lp = lambda_prov
         self._cutoff = cosine_cutoff
         self._embed_model = embed_model
+        self._match_mode = match_mode
         self._embedder = None
 
     def score_path(
@@ -91,35 +93,39 @@ class PathScorer:
         ce = claim_entity.lower().strip()
         pe = path_entity.lower().strip()
 
-        if ce == pe:
+        if self._match_mode != "embed_only" and ce == pe:
             return 1.0, "exact"
 
-        ce_tok = set(ce.split())
-        pe_tok = set(pe.split())
-        if ce_tok and pe_tok:
-            overlap = len(ce_tok & pe_tok) / max(len(ce_tok), len(pe_tok))
-            if overlap >= 0.75:
-                return overlap, "alias"
+        if self._match_mode in ("exact_alias", "exact_alias_embed"):
+            ce_tok = set(ce.split())
+            pe_tok = set(pe.split())
+            if ce_tok and pe_tok:
+                overlap = len(ce_tok & pe_tok) / max(len(ce_tok), len(pe_tok))
+                if overlap >= 0.75:
+                    return overlap, "alias"
 
-        try:
-            sim = self._embed_sim(claim_entity, path_entity)
-            if sim >= self._cutoff:
-                return sim, "embed"
-        except Exception:
-            pass
+        if self._match_mode in ("exact_alias_embed", "embed_only"):
+            try:
+                sim = self._embed_sim(claim_entity, path_entity)
+                if sim >= self._cutoff:
+                    return sim, "embed"
+            except Exception:
+                pass
 
         return 0.0, "none"
 
     def _relation_agreement(self, canon_rel: str, path_rel: str) -> float:
         if not canon_rel or not path_rel:
             return 0.0
-        if canon_rel.lower() == path_rel.lower():
+        if self._match_mode != "embed_only" and canon_rel.lower() == path_rel.lower():
             return 1.0
-        try:
-            sim = self._embed_sim(canon_rel, path_rel)
-            return sim if sim >= self._cutoff else sim * 0.5
-        except Exception:
-            return 0.0
+        if self._match_mode in ("exact_alias_embed", "embed_only"):
+            try:
+                sim = self._embed_sim(canon_rel, path_rel)
+                return sim if sim >= self._cutoff else sim * 0.5
+            except Exception:
+                return 0.0
+        return 0.0
 
     def _embed_sim(self, a: str, b: str) -> float:
         from .embedder import Embedder
