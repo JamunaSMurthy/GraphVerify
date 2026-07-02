@@ -29,6 +29,14 @@ Thumbs.db
 output/
 *.log
 
+# Downloaded/cached dataset artifacts (fetched on demand by dataset/loader.py)
+dataset/data/*.jsonl
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
 # Secrets / env
 .env
 *.env
